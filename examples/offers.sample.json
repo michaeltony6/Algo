@@ -1,0 +1,36 @@
+[
+  {
+    "platform": "doordash",
+    "offer_id": "dd-101",
+    "gross_payout": 26.5,
+    "pickup_miles": 1.8,
+    "dropoff_miles": 4.1,
+    "estimated_minutes": 24,
+    "dropoff_zone": "downtown",
+    "distance_to_preferred_zone_miles": 1.2,
+    "confidence": 0.92
+  },
+  {
+    "platform": "uber_eats",
+    "offer_id": "ue-88",
+    "gross_payout": 19.75,
+    "pickup_miles": 0.7,
+    "dropoff_miles": 2.4,
+    "estimated_minutes": 16,
+    "completion_probability": 0.93,
+    "latest_dropoff_minutes": 25,
+    "confidence": 0.86
+  },
+  {
+    "platform": "grubhub",
+    "offer_id": "gh-55",
+    "gross_payout": 21.0,
+    "pickup_miles": 3.4,
+    "dropoff_miles": 5.8,
+    "return_miles": 4.0,
+    "estimated_minutes": 33,
+    "dropoff_zone": "suburbs",
+    "distance_to_preferred_zone_miles": 4.0,
+    "confidence": 0.9
+  }
+]

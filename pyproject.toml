@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "delivery-session-optimizer"
 version = "0.1.0"
 description = "Platform-agnostic decision engine for ranking delivery offers by expected session profit."
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [{ name = "Delivery Session Optimizer" }]
 readme = "README.md"
 license = { text = "MIT" }

@@ -1,8 +1,26 @@
 # Delivery Session Optimizer
 
-This project contains a first-pass algorithm for choosing the most profitable delivery offer across Uber Eats, DoorDash, Grubhub, or any other marketplace. It does not require or store driver credentials, and it should be fed by approved APIs, user-entered offers, or another compliant data source.
+This project contains a platform-agnostic decision engine for choosing the most profitable delivery offer across Uber Eats, DoorDash, Grubhub, or any other marketplace. It does not require or store driver credentials, and it should be fed by approved APIs, webhooks, user-entered offers, or another compliant data source.
 
 If a GitHub personal access token was shared in chat or committed anywhere, revoke it immediately and create a replacement with only the repository permissions needed.
+
+## What The System Does
+
+The project has three layers:
+
+- `integrations`: official API auth/signing clients and payload normalizers for Uber Eats, DoorDash, and Grubhub.
+- `models`: normalized offers, platform profiles, driver preferences, route context, and market state.
+- `optimizer`: a weighted decision engine that ranks offers and recommends which app to accept or pause.
+
+Official API reality check:
+
+- Uber Eats Marketplace APIs support approved store/menu/order workflows through OAuth 2.0; they are not a public driver-offer feed.
+- DoorDash Drive/Marketplace APIs use signed JWT authentication for approved logistics/merchant workflows; they are not a public driver-offer feed.
+- Grubhub Partner APIs support merchant/POS menu and order workflows using partner keys and MAC auth; they are not a public driver-offer feed.
+
+That means the compliant architecture is: official partner data where approved, plus manual/webhook offer ingestion where driver-offer data is not exposed by the platform.
+
+See [API Integrations](docs/API_INTEGRATIONS.md) for connector details.
 
 ## What The Algorithm Optimizes
 
@@ -13,6 +31,11 @@ expected revenue
 - mileage cost
 - tolls / parking
 - risk penalty
+- payout volatility penalty
+- confidence penalty
+- bad destination / return-to-zone penalty
+- lateness penalty
+- option value of waiting in a hot market
 - target profit for the occupied time
 = offer value margin
 ```
@@ -32,6 +55,12 @@ Driver/session parameters:
 - `max_pickup_miles`: maximum unpaid/low-confidence miles before pickup.
 - `return_to_zone_weight`: how much to count return miles to a preferred hotspot.
 - `risk_tolerance`: `0.0` is conservative, `1.0` ignores risk penalties.
+- `max_deadhead_ratio`: rejects offers where pickup miles dominate paid delivery miles.
+- `wait_option_value_weight`: how aggressively to decline okay orders when the market is hot.
+- `payout_volatility_weight`: how strongly to discount platforms/offers with uncertain payouts.
+- `destination_penalty_per_mile`: cost assigned to ending far from preferred zones.
+- `lateness_penalty_per_minute`: penalty for deliveries projected past the dropoff deadline.
+- `preferred_zones`: zones where ending a delivery is strategically good.
 
 Platform parameters:
 
@@ -39,6 +68,9 @@ Platform parameters:
 - `cancellation_risk`: probability-like penalty for platform/store/customer cancellation.
 - `wait_time_buffer_minutes`: expected extra time for that platform.
 - `offer_arrival_rate_per_hour`: useful for future market forecasting.
+- `payout_volatility`: how uncertain the platform's displayed payout tends to be.
+- `tip_transparency`: how much of a tip estimate should be trusted.
+- `dispatch_confidence`: probability-like confidence that the platform/order dispatch will behave as expected.
 
 Offer parameters:
 
@@ -49,29 +81,53 @@ Offer parameters:
 - `estimated_minutes`, `pickup_wait_minutes`: time burden.
 - `tolls`, `parking`: direct costs.
 - `completion_probability`: chance the delivery completes and pays as expected.
+- `confidence`: confidence in the normalized offer data.
+- `acceptance_deadline_seconds`: how much time the user has to decide.
+- `latest_dropoff_minutes`: deadline pressure for lateness penalties.
+- `pickup_zone`, `dropoff_zone`: zone labels for hotspot strategy.
+- `distance_to_preferred_zone_miles`: burden of ending away from the driver's preferred market.
+- `stacked_count`: number of orders in a stack/batch.
+- `order_complexity`: extra handling complexity.
+- `is_shop_and_pay`: applies a configurable shopping penalty.
+
+Market parameters:
+
+- `demand_multiplier`: how strong current demand is.
+- `traffic_multiplier`: multiplier on estimated time.
+- `weather_risk`: increases time and failure-risk penalties.
+- `courier_saturation`: high saturation reduces the value of waiting.
+- `expected_offer_profit_per_hour`: market-wide expected opportunity if the driver waits.
+- `platform_expected_profit_per_hour`: platform-specific expected opportunity.
+- `platform_wait_minutes`: platform-specific wait buffers.
+- `zone_heat`: multiplier for zones where ending a trip is good.
 
 ## CLI Example
 
-Create `offers.json`:
+Create `offers.json` or use [examples/offers.sample.json](examples/offers.sample.json):
 
 ```json
 [
   {
     "platform": "doordash",
     "offer_id": "dd-101",
-    "gross_payout": 18.5,
+    "gross_payout": 26.5,
     "pickup_miles": 1.8,
     "dropoff_miles": 4.1,
-    "estimated_minutes": 24
+    "estimated_minutes": 24,
+    "dropoff_zone": "downtown",
+    "distance_to_preferred_zone_miles": 1.2,
+    "confidence": 0.92
   },
   {
     "platform": "uber_eats",
     "offer_id": "ue-88",
-    "gross_payout": 13.75,
+    "gross_payout": 19.75,
     "pickup_miles": 0.7,
     "dropoff_miles": 2.4,
     "estimated_minutes": 16,
-    "completion_probability": 0.93
+    "completion_probability": 0.93,
+    "latest_dropoff_minutes": 25,
+    "confidence": 0.86
   }
 ]
 ```
@@ -79,13 +135,19 @@ Create `offers.json`:
 Run:
 
 ```bash
-delivery-optimizer --offers offers.json --target-hourly 25 --vehicle-cost 0.45
+delivery-optimizer \
+  --offers offers.json \
+  --target-hourly 25 \
+  --vehicle-cost 0.45 \
+  --demand-multiplier 1.2 \
+  --traffic-multiplier 1.1 \
+  --expected-offer-hourly 28
 ```
 
 Or from source:
 
 ```bash
-PYTHONPATH=src python3 -m delivery_optimizer --offers offers.json --target-hourly 25 --vehicle-cost 0.45
+PYTHONPATH=src python3 -m delivery_optimizer --offers examples/offers.sample.json --target-hourly 25 --vehicle-cost 0.45
 ```
 
 ## Development

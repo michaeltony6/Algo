@@ -5,6 +5,7 @@ from collections.abc import Iterable, Mapping
 from .models import (
     Decision,
     DriverPreferences,
+    MarketState,
     Offer,
     PlatformAction,
     PlatformProfile,
@@ -21,6 +22,9 @@ DEFAULT_PLATFORM_PROFILES: dict[str, PlatformProfile] = {
         cancellation_risk=0.04,
         wait_time_buffer_minutes=3.0,
         offer_arrival_rate_per_hour=5.0,
+        payout_volatility=0.12,
+        tip_transparency=0.65,
+        dispatch_confidence=0.88,
     ),
     "doordash": PlatformProfile(
         name="doordash",
@@ -28,6 +32,9 @@ DEFAULT_PLATFORM_PROFILES: dict[str, PlatformProfile] = {
         cancellation_risk=0.03,
         wait_time_buffer_minutes=4.0,
         offer_arrival_rate_per_hour=5.5,
+        payout_volatility=0.07,
+        tip_transparency=0.8,
+        dispatch_confidence=0.92,
     ),
     "grubhub": PlatformProfile(
         name="grubhub",
@@ -35,6 +42,9 @@ DEFAULT_PLATFORM_PROFILES: dict[str, PlatformProfile] = {
         cancellation_risk=0.025,
         wait_time_buffer_minutes=5.0,
         offer_arrival_rate_per_hour=3.5,
+        payout_volatility=0.06,
+        tip_transparency=0.82,
+        dispatch_confidence=0.9,
     ),
 }
 
@@ -52,38 +62,63 @@ class DeliverySessionOptimizer:
         if platform_profiles:
             self.platform_profiles.update(platform_profiles)
 
-    def score_offer(self, offer: Offer, state: SessionState | None = None) -> ScoredOffer:
+    def score_offer(
+        self,
+        offer: Offer,
+        state: SessionState | None = None,
+        market: MarketState | None = None,
+    ) -> ScoredOffer:
         profile = self._profile_for(offer.platform)
         prefs = self.preferences
+        market = market or MarketState()
 
         total_miles = (
             offer.pickup_miles
             + offer.dropoff_miles
             + (offer.return_miles * prefs.return_to_zone_weight)
         )
-        total_minutes = (
+        total_minutes = self._traffic_adjusted_minutes(
             offer.estimated_minutes
             + offer.pickup_wait_minutes
             + profile.wait_time_buffer_minutes
+            + market.platform_wait_minutes.get(offer.platform, market.estimated_wait_minutes * 0.15)
+            + (offer.order_complexity * 2)
+            + (max(offer.stacked_count - 1, 0) * 4),
+            market,
         )
         hours = total_minutes / 60
 
-        expected_revenue = (
-            offer.gross_payout + offer.tip_estimate + offer.bonus
-        ) * offer.completion_probability * profile.reliability
+        expected_revenue = self._expected_revenue(offer, profile)
         operating_cost = (total_miles * prefs.vehicle_cost_per_mile) + offer.tolls + offer.parking
 
-        combined_failure_risk = 1 - (
-            offer.completion_probability * profile.reliability * (1 - profile.cancellation_risk)
+        risk_penalty = self._risk_penalty(offer, profile, market, expected_revenue)
+        volatility_penalty = (
+            expected_revenue
+            * profile.payout_volatility
+            * prefs.payout_volatility_weight
+            * (1 - prefs.risk_tolerance)
         )
-        risk_penalty = expected_revenue * combined_failure_risk * (1 - prefs.risk_tolerance)
+        confidence_penalty = expected_revenue * (1 - offer.confidence) * (1 - prefs.risk_tolerance)
+        destination_penalty = self._destination_penalty(offer, market)
+        lateness_penalty = self._lateness_penalty(offer, total_minutes)
+        shop_and_pay_penalty = prefs.shop_and_pay_penalty if offer.is_shop_and_pay else 0.0
 
-        net_profit = expected_revenue - operating_cost - risk_penalty
+        net_profit = (
+            expected_revenue
+            - operating_cost
+            - risk_penalty
+            - volatility_penalty
+            - confidence_penalty
+            - destination_penalty
+            - lateness_penalty
+            - shop_and_pay_penalty
+        )
         profit_per_hour = net_profit / hours if hours else 0.0
 
         reservation_rate = self._reservation_rate(state)
         opportunity_cost = reservation_rate * hours
-        value_margin = net_profit - opportunity_cost
+        option_value = self._option_value(offer, profile, market, hours, reservation_rate)
+        value_margin = net_profit - opportunity_cost - option_value
 
         reasons = self._decline_reasons(
             offer=offer,
@@ -106,6 +141,11 @@ class DeliverySessionOptimizer:
             profit_per_hour=round(profit_per_hour, 2),
             total_miles=round(total_miles, 2),
             total_minutes=round(total_minutes, 1),
+            option_value=round(option_value, 2),
+            destination_penalty=round(destination_penalty, 2),
+            lateness_penalty=round(lateness_penalty, 2),
+            volatility_penalty=round(volatility_penalty, 2),
+            confidence_penalty=round(confidence_penalty, 2),
             value_margin=round(value_margin, 2),
             reasons=tuple(reasons),
         )
@@ -114,10 +154,11 @@ class DeliverySessionOptimizer:
         self,
         offers: Iterable[Offer],
         state: SessionState | None = None,
+        market: MarketState | None = None,
     ) -> Recommendation:
         scored = tuple(
             sorted(
-                (self.score_offer(offer, state) for offer in offers),
+                (self.score_offer(offer, state, market) for offer in offers),
                 key=lambda scored_offer: (
                     scored_offer.decision == Decision.ACCEPT,
                     scored_offer.value_margin,
@@ -137,6 +178,77 @@ class DeliverySessionOptimizer:
 
     def _profile_for(self, platform: str) -> PlatformProfile:
         return self.platform_profiles.get(platform, PlatformProfile(name=platform))
+
+    def _expected_revenue(self, offer: Offer, profile: PlatformProfile) -> float:
+        guaranteed = offer.gross_payout + offer.bonus
+        visible_tip_value = offer.tip_estimate * profile.tip_transparency
+        return (
+            guaranteed + visible_tip_value
+        ) * offer.completion_probability * profile.reliability * profile.dispatch_confidence
+
+    def _traffic_adjusted_minutes(self, minutes: float, market: MarketState) -> float:
+        weather_drag = 1 + (market.weather_risk * 0.25)
+        return minutes * max(market.traffic_multiplier, 0.1) * weather_drag
+
+    def _risk_penalty(
+        self,
+        offer: Offer,
+        profile: PlatformProfile,
+        market: MarketState,
+        expected_revenue: float,
+    ) -> float:
+        prefs = self.preferences
+        success_probability = (
+            offer.completion_probability
+            * profile.reliability
+            * profile.dispatch_confidence
+            * (1 - profile.cancellation_risk)
+            * offer.confidence
+            * (1 - (market.weather_risk * 0.35))
+        )
+        failure_risk = 1 - max(0.0, min(success_probability, 1.0))
+        return expected_revenue * failure_risk * (1 - prefs.risk_tolerance)
+
+    def _destination_penalty(self, offer: Offer, market: MarketState) -> float:
+        prefs = self.preferences
+        if offer.dropoff_zone and offer.dropoff_zone in prefs.preferred_zones:
+            return 0.0
+
+        zone_heat = market.zone_heat.get(offer.dropoff_zone, 1.0) if offer.dropoff_zone else 1.0
+        heat_discount = max(zone_heat, 0.25)
+        distance = offer.distance_to_preferred_zone_miles or (offer.return_miles * prefs.return_to_zone_weight)
+        return (distance * prefs.destination_penalty_per_mile) / heat_discount
+
+    def _lateness_penalty(self, offer: Offer, total_minutes: float) -> float:
+        if offer.latest_dropoff_minutes is None or total_minutes <= offer.latest_dropoff_minutes:
+            return 0.0
+        return (total_minutes - offer.latest_dropoff_minutes) * self.preferences.lateness_penalty_per_minute
+
+    def _option_value(
+        self,
+        offer: Offer,
+        profile: PlatformProfile,
+        market: MarketState,
+        hours: float,
+        reservation_rate: float,
+    ) -> float:
+        market_rate = market.platform_expected_profit_per_hour.get(
+            offer.platform,
+            market.expected_offer_profit_per_hour,
+        )
+        adjusted_rate = (
+            market_rate
+            * max(market.demand_multiplier, 0.1)
+            / max(market.courier_saturation, 0.25)
+        )
+        better_offer_premium = max(0.0, adjusted_rate - reservation_rate)
+        arrival_pressure = min(1.0, profile.offer_arrival_rate_per_hour * max(hours, 0.0) / 3)
+        return (
+            better_offer_premium
+            * hours
+            * arrival_pressure
+            * self.preferences.wait_option_value_weight
+        )
 
     def _reservation_rate(self, state: SessionState | None) -> float:
         prefs = self.preferences
@@ -173,6 +285,12 @@ class DeliverySessionOptimizer:
             reasons.append("too many total miles")
         if offer.pickup_miles > prefs.max_pickup_miles:
             reasons.append("pickup is too far")
+        paid_miles = max(offer.dropoff_miles, 0.1)
+        deadhead_ratio = offer.pickup_miles / (offer.pickup_miles + paid_miles)
+        if deadhead_ratio > prefs.max_deadhead_ratio:
+            reasons.append("too much pickup deadhead")
+        if offer.acceptance_deadline_seconds is not None and offer.acceptance_deadline_seconds < 5:
+            reasons.append("decision window is too short")
         return reasons
 
     def _platform_actions(

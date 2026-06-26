@@ -3,10 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import asdict
-from pathlib import Path
+from enum import Enum
 from typing import Any
 
-from .models import DriverPreferences, Offer, SessionState
+from .integrations.manual import offers_from_json
+from .models import DriverPreferences, MarketState, SessionState
 from .optimizer import DeliverySessionOptimizer
 
 
@@ -20,13 +21,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--elapsed-minutes", type=float, default=0.0)
     parser.add_argument("--net-profit-so-far", type=float, default=0.0)
     parser.add_argument("--goal-minutes", type=float, default=240.0)
+    parser.add_argument("--demand-multiplier", type=float, default=1.0)
+    parser.add_argument("--traffic-multiplier", type=float, default=1.0)
+    parser.add_argument("--weather-risk", type=float, default=0.0)
+    parser.add_argument("--courier-saturation", type=float, default=1.0)
+    parser.add_argument("--expected-offer-hourly", type=float, default=22.0)
     args = parser.parse_args(argv)
 
-    raw_offers = json.loads(Path(args.offers).read_text(encoding="utf-8"))
-    if not isinstance(raw_offers, list):
-        raise SystemExit("offers file must contain a JSON array")
-
-    offers = [Offer(**offer) for offer in raw_offers]
+    offers = offers_from_json(args.offers)
     preferences = DriverPreferences(
         vehicle_cost_per_mile=args.vehicle_cost,
         target_profit_per_hour=args.target_hourly,
@@ -38,7 +40,14 @@ def main(argv: list[str] | None = None) -> int:
         net_profit_so_far=args.net_profit_so_far,
         goal_minutes=args.goal_minutes,
     )
-    recommendation = DeliverySessionOptimizer(preferences).recommend(offers, state)
+    market = MarketState(
+        demand_multiplier=args.demand_multiplier,
+        traffic_multiplier=args.traffic_multiplier,
+        weather_risk=args.weather_risk,
+        courier_saturation=args.courier_saturation,
+        expected_offer_profit_per_hour=args.expected_offer_hourly,
+    )
+    recommendation = DeliverySessionOptimizer(preferences).recommend(offers, state, market)
     print(json.dumps(_recommendation_to_dict(recommendation), indent=2))
     return 0
 
@@ -62,4 +71,16 @@ def _scored_offer_to_dict(scored_offer: Any) -> dict[str, Any]:
     data = asdict(scored_offer)
     data["decision"] = scored_offer.decision.value
     data["offer"]["metadata"] = dict(scored_offer.offer.metadata)
-    return data
+    return _json_safe(data)
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    return value
