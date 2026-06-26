@@ -14,6 +14,7 @@ from .models import (
     SessionState,
 )
 from .optimizer import DeliverySessionOptimizer
+from .policies import ScoringPolicy, get_policy
 
 __all__ = [
     "Decision",
@@ -26,6 +27,8 @@ __all__ = [
     "PlatformAction",
     "PlatformProfile",
     "Recommendation",
+    "ScoringPolicy",
     "ScoredOffer",
     "SessionState",
+    "get_policy",
 ]

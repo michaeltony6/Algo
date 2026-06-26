@@ -59,7 +59,7 @@ class DeliverySessionOptimizerTest(unittest.TestCase):
         )
         self.assertEqual(
             recommendation.platform_actions["doordash"],
-            PlatformAction.PAUSE_WHILE_ACTIVE,
+            PlatformAction.PAUSE_AFTER_PICKUP,
         )
 
     def test_declines_offer_below_target_after_costs(self) -> None:

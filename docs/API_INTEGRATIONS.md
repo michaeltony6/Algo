@@ -27,6 +27,14 @@ Useful credential fields:
 - `client_secret`
 - `scope`, for example `eats.order` when approved.
 
+Environment variables:
+
+- `UBER_CLIENT_ID`
+- `UBER_CLIENT_SECRET`
+- `UBER_SCOPE`
+
+The client caches OAuth access tokens until shortly before expiry.
+
 Official reference: https://developer.uber.com/docs/eats/guides/authentication
 
 ## DoorDash
@@ -44,6 +52,12 @@ Useful credential fields:
 - `developer_id`
 - `key_id`
 - `signing_secret`
+
+Environment variables:
+
+- `DOORDASH_DEVELOPER_ID`
+- `DOORDASH_KEY_ID`
+- `DOORDASH_SIGNING_SECRET`
 
 Official references:
 
@@ -66,6 +80,12 @@ Useful credential fields:
 - `client_id`
 - `signing_secret`
 
+Environment variables:
+
+- `GRUBHUB_PARTNER_KEY`
+- `GRUBHUB_CLIENT_ID`
+- `GRUBHUB_SIGNING_SECRET`
+
 Official reference: https://grubhub-developers.zendesk.com/hc/en-us/articles/360000061003-Authentication
 
 ## Manual And Webhook Ingestion
@@ -73,3 +93,15 @@ Official reference: https://grubhub-developers.zendesk.com/hc/en-us/articles/360
 File: `src/delivery_optimizer/integrations/manual.py`
 
 Use `offers_from_json(path)` or `offer_from_mapping(payload)` to convert JSON into the shared `Offer` model. This is the recommended path for early product development because it lets the optimizer mature before any live platform approval is granted.
+
+## HTTP Client Behavior
+
+`UrlLibHttpClient` supports:
+
+- request timeouts
+- bounded retries
+- linear backoff
+- retry handling for common transient HTTP status codes
+- structured `ApiIntegrationError.status_code`
+
+It intentionally avoids extra runtime dependencies for now.

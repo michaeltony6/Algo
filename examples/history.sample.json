@@ -1,0 +1,44 @@
+[
+  {
+    "platform": "doordash",
+    "offered_payout": 16.5,
+    "final_payout": 18.25,
+    "estimated_minutes": 24,
+    "actual_minutes": 29,
+    "estimated_miles": 5.1,
+    "actual_miles": 5.8,
+    "accepted": true,
+    "completed": true,
+    "canceled": false,
+    "timestamp_minutes": 0,
+    "dropoff_zone": "downtown"
+  },
+  {
+    "platform": "uber_eats",
+    "offered_payout": 12.75,
+    "final_payout": 10.25,
+    "estimated_minutes": 19,
+    "actual_minutes": 23,
+    "estimated_miles": 3.2,
+    "actual_miles": 3.7,
+    "accepted": true,
+    "completed": true,
+    "canceled": false,
+    "timestamp_minutes": 38,
+    "dropoff_zone": "midtown"
+  },
+  {
+    "platform": "grubhub",
+    "offered_payout": 14.0,
+    "final_payout": 0,
+    "estimated_minutes": 31,
+    "actual_minutes": 0,
+    "estimated_miles": 7.4,
+    "actual_miles": 0,
+    "accepted": true,
+    "completed": false,
+    "canceled": true,
+    "timestamp_minutes": 72,
+    "dropoff_zone": "suburbs"
+  }
+]

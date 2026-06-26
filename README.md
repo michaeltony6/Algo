@@ -9,8 +9,11 @@ If a GitHub personal access token was shared in chat or committed anywhere, revo
 The project has three layers:
 
 - `integrations`: official API auth/signing clients and payload normalizers for Uber Eats, DoorDash, and Grubhub.
-- `models`: normalized offers, platform profiles, driver preferences, route context, and market state.
-- `optimizer`: a weighted decision engine that ranks offers and recommends which app to accept or pause.
+- `routing`: route providers that can enrich offers with pickup, dropoff, and return-to-zone distance.
+- `calibration`: historical session learning that updates platform profiles, market expectations, and policy weights.
+- `simulation`: backtesting strategies against replayed offer streams.
+- `models`: normalized offers, platform profiles, driver preferences, route context, market state, and action recommendations.
+- `optimizer`: a policy-driven decision engine that ranks offers and recommends app actions.
 
 Official API reality check:
 
@@ -20,7 +23,7 @@ Official API reality check:
 
 That means the compliant architecture is: official partner data where approved, plus manual/webhook offer ingestion where driver-offer data is not exposed by the platform.
 
-See [API Integrations](docs/API_INTEGRATIONS.md) for connector details.
+See [Architecture](docs/ARCHITECTURE.md) and [API Integrations](docs/API_INTEGRATIONS.md) for details.
 
 ## What The Algorithm Optimizes
 
@@ -41,6 +44,7 @@ expected revenue
 ```
 
 The engine recommends the highest-margin acceptable offer and suggests pausing other platforms while that delivery is active.
+Secondary app actions are more nuanced than all-or-nothing pausing: the recommendation can keep other apps online until pickup, accept only same-corridor add-ons, pause after pickup, or decline conflicting offers when a delivery is deadline-sensitive.
 
 ## Core Parameters
 
@@ -141,7 +145,8 @@ delivery-optimizer \
   --vehicle-cost 0.45 \
   --demand-multiplier 1.2 \
   --traffic-multiplier 1.1 \
-  --expected-offer-hourly 28
+  --expected-offer-hourly 28 \
+  --policy dinner_rush
 ```
 
 Or from source:
@@ -149,6 +154,29 @@ Or from source:
 ```bash
 PYTHONPATH=src python3 -m delivery_optimizer --offers examples/offers.sample.json --target-hourly 25 --vehicle-cost 0.45
 ```
+
+Available policies:
+
+- `balanced`
+- `conservative`
+- `aggressive`
+- `dinner_rush`
+- `rainy_day`
+
+## Historical Learning
+
+Use `delivery_optimizer.calibration.calibrate()` with records shaped like [examples/history.sample.json](examples/history.sample.json). The calibrator learns:
+
+- platform reliability
+- cancellation risk
+- wait-time buffer
+- payout volatility
+- expected market profit per hour
+- a suggested `calibrated` scoring policy
+
+## Backtesting
+
+Use `delivery_optimizer.simulation.BacktestSimulator` to replay offer streams against the optimizer and simpler baseline strategies such as dollars-per-mile or hourly threshold rules. This is the path for proving whether a new scoring policy would have improved a real shift before using it live.
 
 ## Development
 

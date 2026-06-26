@@ -13,7 +13,11 @@ class Decision(str, Enum):
 class PlatformAction(str, Enum):
     ACCEPT_SELECTED = "accept_selected"
     KEEP_ONLINE = "keep_online"
+    KEEP_UNTIL_PICKUP = "keep_until_pickup"
+    ACCEPT_SAME_CORRIDOR_ONLY = "accept_same_corridor_only"
+    PAUSE_AFTER_PICKUP = "pause_after_pickup"
     PAUSE_WHILE_ACTIVE = "pause_while_active"
+    DECLINE_CONFLICTING = "decline_conflicting"
 
 
 class OfferSource(str, Enum):
@@ -132,6 +136,7 @@ class Offer:
     dropoff_location: Location | None = None
     pickup_zone: str = ""
     dropoff_zone: str = ""
+    corridor_id: str = ""
     distance_to_preferred_zone_miles: float = 0.0
     stacked_count: int = 1
     order_complexity: float = 0.0
@@ -175,10 +180,14 @@ class SessionState:
     elapsed_minutes: float = 0.0
     net_profit_so_far: float = 0.0
     goal_minutes: float = 240.0
+    active_offer_id: str | None = None
+    active_until_minute: float = 0.0
+    current_zone: str = ""
 
     def __post_init__(self) -> None:
         _validate_non_negative("elapsed_minutes", self.elapsed_minutes)
         _validate_non_negative("goal_minutes", self.goal_minutes)
+        _validate_non_negative("active_until_minute", self.active_until_minute)
 
 
 @dataclass(frozen=True)
@@ -215,6 +224,7 @@ class MarketState:
 class ScoredOffer:
     offer: Offer
     decision: Decision
+    policy_name: str
     expected_revenue: float
     operating_cost: float
     risk_penalty: float

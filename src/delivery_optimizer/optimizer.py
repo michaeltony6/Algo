@@ -13,6 +13,7 @@ from .models import (
     ScoredOffer,
     SessionState,
 )
+from .policies import BALANCED_POLICY, ScoringPolicy
 
 
 DEFAULT_PLATFORM_PROFILES: dict[str, PlatformProfile] = {
@@ -56,11 +57,13 @@ class DeliverySessionOptimizer:
         self,
         preferences: DriverPreferences | None = None,
         platform_profiles: Mapping[str, PlatformProfile] | None = None,
+        policy: ScoringPolicy | None = None,
     ) -> None:
         self.preferences = preferences or DriverPreferences()
         self.platform_profiles = dict(DEFAULT_PLATFORM_PROFILES)
         if platform_profiles:
             self.platform_profiles.update(platform_profiles)
+        self.policy = policy or BALANCED_POLICY
 
     def score_offer(
         self,
@@ -81,9 +84,12 @@ class DeliverySessionOptimizer:
             offer.estimated_minutes
             + offer.pickup_wait_minutes
             + profile.wait_time_buffer_minutes
-            + market.platform_wait_minutes.get(offer.platform, market.estimated_wait_minutes * 0.15)
-            + (offer.order_complexity * 2)
-            + (max(offer.stacked_count - 1, 0) * 4),
+            + market.platform_wait_minutes.get(
+                offer.platform,
+                market.estimated_wait_minutes * self.policy.platform_wait_market_weight,
+            )
+            + (offer.order_complexity * self.policy.complexity_minutes_per_point)
+            + (max(offer.stacked_count - 1, 0) * self.policy.stacked_order_minutes),
             market,
         )
         hours = total_minutes / 60
@@ -91,17 +97,30 @@ class DeliverySessionOptimizer:
         expected_revenue = self._expected_revenue(offer, profile)
         operating_cost = (total_miles * prefs.vehicle_cost_per_mile) + offer.tolls + offer.parking
 
-        risk_penalty = self._risk_penalty(offer, profile, market, expected_revenue)
+        risk_penalty = (
+            self._risk_penalty(offer, profile, market, expected_revenue)
+            * self.policy.risk_penalty_weight
+        )
         volatility_penalty = (
             expected_revenue
             * profile.payout_volatility
             * prefs.payout_volatility_weight
             * (1 - prefs.risk_tolerance)
+            * self.policy.volatility_penalty_weight
         )
-        confidence_penalty = expected_revenue * (1 - offer.confidence) * (1 - prefs.risk_tolerance)
-        destination_penalty = self._destination_penalty(offer, market)
-        lateness_penalty = self._lateness_penalty(offer, total_minutes)
-        shop_and_pay_penalty = prefs.shop_and_pay_penalty if offer.is_shop_and_pay else 0.0
+        confidence_penalty = (
+            expected_revenue
+            * (1 - offer.confidence)
+            * (1 - prefs.risk_tolerance)
+            * self.policy.confidence_penalty_weight
+        )
+        destination_penalty = self._destination_penalty(offer, market) * self.policy.destination_penalty_weight
+        lateness_penalty = self._lateness_penalty(offer, total_minutes) * self.policy.lateness_penalty_weight
+        shop_and_pay_penalty = (
+            prefs.shop_and_pay_penalty * self.policy.shop_and_pay_penalty_weight
+            if offer.is_shop_and_pay
+            else 0.0
+        )
 
         net_profit = (
             expected_revenue
@@ -133,6 +152,7 @@ class DeliverySessionOptimizer:
         return ScoredOffer(
             offer=offer,
             decision=decision,
+            policy_name=self.policy.name,
             expected_revenue=round(expected_revenue, 2),
             operating_cost=round(operating_cost, 2),
             risk_penalty=round(risk_penalty, 2),
@@ -187,7 +207,7 @@ class DeliverySessionOptimizer:
         ) * offer.completion_probability * profile.reliability * profile.dispatch_confidence
 
     def _traffic_adjusted_minutes(self, minutes: float, market: MarketState) -> float:
-        weather_drag = 1 + (market.weather_risk * 0.25)
+        weather_drag = 1 + (market.weather_risk * self.policy.weather_time_drag)
         return minutes * max(market.traffic_multiplier, 0.1) * weather_drag
 
     def _risk_penalty(
@@ -204,7 +224,7 @@ class DeliverySessionOptimizer:
             * profile.dispatch_confidence
             * (1 - profile.cancellation_risk)
             * offer.confidence
-            * (1 - (market.weather_risk * 0.35))
+            * (1 - (market.weather_risk * self.policy.weather_failure_drag))
         )
         failure_risk = 1 - max(0.0, min(success_probability, 1.0))
         return expected_revenue * failure_risk * (1 - prefs.risk_tolerance)
@@ -248,6 +268,7 @@ class DeliverySessionOptimizer:
             * hours
             * arrival_pressure
             * self.preferences.wait_option_value_weight
+            * self.policy.option_value_weight_multiplier
         )
 
     def _reservation_rate(self, state: SessionState | None) -> float:
@@ -301,11 +322,36 @@ class DeliverySessionOptimizer:
         platforms = {offer.offer.platform for offer in scored}
         if selected is None:
             return {platform: PlatformAction.KEEP_ONLINE for platform in platforms}
+        selected_offer = selected.offer
+        tight_deadline = (
+            selected_offer.latest_dropoff_minutes is not None
+            and selected.total_minutes
+            > selected_offer.latest_dropoff_minutes - self.policy.tight_deadline_buffer_minutes
+        )
         return {
             platform: (
                 PlatformAction.ACCEPT_SELECTED
                 if platform == selected.offer.platform
-                else PlatformAction.PAUSE_WHILE_ACTIVE
+                else self._secondary_platform_action(selected, tight_deadline)
             )
             for platform in platforms
         }
+
+    def _secondary_platform_action(
+        self,
+        selected: ScoredOffer,
+        tight_deadline: bool,
+    ) -> PlatformAction:
+        offer = selected.offer
+        if tight_deadline:
+            return PlatformAction.DECLINE_CONFLICTING
+        if (
+            offer.pickup_miles <= self.policy.keep_online_pickup_miles
+            and selected.total_minutes <= self.policy.keep_online_pickup_minutes
+        ):
+            return PlatformAction.KEEP_UNTIL_PICKUP
+        if offer.corridor_id or offer.dropoff_zone:
+            return PlatformAction.ACCEPT_SAME_CORRIDOR_ONLY
+        if offer.pickup_miles <= self.policy.same_corridor_max_pickup_miles:
+            return PlatformAction.PAUSE_AFTER_PICKUP
+        return PlatformAction.PAUSE_WHILE_ACTIVE

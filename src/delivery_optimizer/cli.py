@@ -9,6 +9,7 @@ from typing import Any
 from .integrations.manual import offers_from_json
 from .models import DriverPreferences, MarketState, SessionState
 from .optimizer import DeliverySessionOptimizer
+from .policies import get_policy
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,6 +27,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--weather-risk", type=float, default=0.0)
     parser.add_argument("--courier-saturation", type=float, default=1.0)
     parser.add_argument("--expected-offer-hourly", type=float, default=22.0)
+    parser.add_argument(
+        "--policy",
+        default="balanced",
+        choices=("balanced", "conservative", "aggressive", "dinner_rush", "rainy_day"),
+    )
     args = parser.parse_args(argv)
 
     offers = offers_from_json(args.offers)
@@ -47,7 +53,10 @@ def main(argv: list[str] | None = None) -> int:
         courier_saturation=args.courier_saturation,
         expected_offer_profit_per_hour=args.expected_offer_hourly,
     )
-    recommendation = DeliverySessionOptimizer(preferences).recommend(offers, state, market)
+    recommendation = DeliverySessionOptimizer(
+        preferences,
+        policy=get_policy(args.policy),
+    ).recommend(offers, state, market)
     print(json.dumps(_recommendation_to_dict(recommendation), indent=2))
     return 0
 

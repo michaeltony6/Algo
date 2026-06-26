@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode
@@ -21,6 +23,14 @@ class UberCredentials:
         if not self.client_id or not self.client_secret:
             raise ApiCredentialsError("Uber client_id and client_secret are required")
 
+    @staticmethod
+    def from_env(prefix: str = "UBER") -> UberCredentials:
+        return UberCredentials(
+            client_id=os.environ.get(f"{prefix}_CLIENT_ID", ""),
+            client_secret=os.environ.get(f"{prefix}_CLIENT_SECRET", ""),
+            scope=os.environ.get(f"{prefix}_SCOPE", "eats.order"),
+        )
+
 
 class UberEatsClient:
     platform = "uber_eats"
@@ -38,6 +48,7 @@ class UberEatsClient:
         self.token_url = token_url
         self.http_client = http_client or UrlLibHttpClient()
         self._access_token: str | None = None
+        self._access_token_expires_at: float = 0.0
 
     def fetch_access_token(self) -> str:
         body = urlencode(
@@ -59,10 +70,14 @@ class UberEatsClient:
         if not isinstance(token, str) or not token:
             raise ApiIntegrationError("Uber token response did not include access_token")
         self._access_token = token
+        expires_in = payload.get("expires_in", 3600)
+        self._access_token_expires_at = time.time() + max(float(expires_in) - 60, 0)
         return token
 
     def headers(self) -> dict[str, str]:
-        token = self._access_token or self.fetch_access_token()
+        token = self._access_token
+        if not token or time.time() >= self._access_token_expires_at:
+            token = self.fetch_access_token()
         return {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",

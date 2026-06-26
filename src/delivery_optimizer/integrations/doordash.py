@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,6 +22,14 @@ class DoorDashCredentials:
         if not self.developer_id or not self.key_id or not self.signing_secret:
             raise ApiCredentialsError("DoorDash developer_id, key_id, and signing_secret are required")
 
+    @staticmethod
+    def from_env(prefix: str = "DOORDASH") -> DoorDashCredentials:
+        return DoorDashCredentials(
+            developer_id=os.environ.get(f"{prefix}_DEVELOPER_ID", ""),
+            key_id=os.environ.get(f"{prefix}_KEY_ID", ""),
+            signing_secret=os.environ.get(f"{prefix}_SIGNING_SECRET", ""),
+        )
+
 
 class DoorDashDriveClient:
     platform = "doordash"
@@ -37,6 +46,8 @@ class DoorDashDriveClient:
         self.http_client = http_client or UrlLibHttpClient()
 
     def build_jwt(self, lifetime_seconds: int = 300) -> str:
+        if lifetime_seconds <= 0:
+            raise ValueError("lifetime_seconds must be positive")
         issued_at = now_epoch()
         return hs256_jwt(
             header={"alg": "HS256", "typ": "JWT", "kid": self.credentials.key_id},

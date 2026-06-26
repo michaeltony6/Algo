@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -25,6 +26,14 @@ class GrubhubCredentials:
     def validate(self) -> None:
         if not self.partner_key or not self.client_id or not self.signing_secret:
             raise ApiCredentialsError("Grubhub partner_key, client_id, and signing_secret are required")
+
+    @staticmethod
+    def from_env(prefix: str = "GRUBHUB") -> GrubhubCredentials:
+        return GrubhubCredentials(
+            partner_key=os.environ.get(f"{prefix}_PARTNER_KEY", ""),
+            client_id=os.environ.get(f"{prefix}_CLIENT_ID", ""),
+            signing_secret=os.environ.get(f"{prefix}_SIGNING_SECRET", ""),
+        )
 
 
 class GrubhubPartnerClient:
