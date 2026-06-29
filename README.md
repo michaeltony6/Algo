@@ -171,6 +171,17 @@ delivery-dashboard --db data/demo.sqlite3
 
 The dashboard seeds itself from `examples/offers.sample.json` and `examples/history.sample.json` when the database is empty. It shows live recommendations, driver profile controls, market sliders, prediction confidence, calibration, zone ranking, and strategy backtests.
 
+It also includes a **Live Random Route Lab**. Use `Start`, `Step`, `Burst`, and `Reset` to generate random delivery-route batches in real time. Each tick shows:
+
+- the simulated offers that appeared
+- how the optimizer ranked them
+- accept/decline status
+- reasons for each decision
+- active-delivery timing
+- running profit, hourly rate, accepted count, and declined count
+
+The lab is deterministic by seed, so the same seed recreates the same route stream for debugging.
+
 Available policies:
 
 - `balanced`

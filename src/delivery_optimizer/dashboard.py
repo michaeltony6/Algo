@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .calibration import calibrate
 from .integrations.manual import offers_from_json
+from .live import LiveRouteLab, live_state_to_dict
 from .models import MarketState, Offer
 from .optimizer import DeliverySessionOptimizer
 from .prediction import SimpleStatsPredictor
@@ -63,6 +64,7 @@ def seed_demo_data(store: OptimizerStore) -> None:
 class DashboardApp:
     def __init__(self, store: OptimizerStore) -> None:
         self.store = store
+        self.live_lab = LiveRouteLab()
 
     def handler_class(self) -> type[BaseHTTPRequestHandler]:
         app = self
@@ -82,12 +84,48 @@ class DashboardApp:
                         self._send_json({"offers": [_safe_asdict(offer) for offer in app.store.list_offers()]})
                     elif parsed.path == "/api/profiles":
                         self._send_json(app.profiles())
+                    elif parsed.path == "/api/live/state":
+                        self._send_json({"live": live_state_to_dict(app.live_lab.state())})
                     elif parsed.path == "/api/health":
                         self._send_json({"status": "ok", "summary": app.store.summary()})
                     else:
                         self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
                 except Exception as error:  # pragma: no cover - surfaced through local app.
                     self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+            def do_POST(self) -> None:
+                parsed = urlparse(self.path)
+                try:
+                    payload = self._read_json()
+                    if parsed.path == "/api/live/reset":
+                        seed = payload.get("seed")
+                        state = app.live_lab.reset(int(seed) if seed not in (None, "") else None)
+                        self._send_json({"live": live_state_to_dict(state)})
+                    elif parsed.path == "/api/live/tick":
+                        count = max(1, min(int(payload.get("count", 1)), 20))
+                        event_payloads = []
+                        for _ in range(count):
+                            event = app.live_lab.step(
+                                profile_name=str(payload.get("profile", "maximize_hourly")),
+                                market=_market_from_payload(payload),
+                            )
+                            event_payloads.append(event.tick)
+                        self._send_json(
+                            {
+                                "ticks": event_payloads,
+                                "live": live_state_to_dict(app.live_lab.state()),
+                            }
+                        )
+                    else:
+                        self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+                except Exception as error:  # pragma: no cover - surfaced through local app.
+                    self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+            def _read_json(self) -> dict:
+                length = int(self.headers.get("Content-Length", "0") or 0)
+                if length == 0:
+                    return {}
+                return json.loads(self.rfile.read(length).decode("utf-8"))
 
             def _send_html(self, html: str) -> None:
                 body = html.encode("utf-8")
@@ -178,6 +216,16 @@ def _market_from_query(query: dict[str, list[str]]) -> MarketState:
     )
 
 
+def _market_from_payload(payload: dict) -> MarketState:
+    return MarketState(
+        demand_multiplier=float(payload.get("demand", 1.15)),
+        traffic_multiplier=float(payload.get("traffic", 1.05)),
+        weather_risk=float(payload.get("weather", 0.0)),
+        courier_saturation=float(payload.get("saturation", 1.0)),
+        expected_offer_profit_per_hour=float(payload.get("expectedHourly", 28)),
+    )
+
+
 def _calibration_payload(calibration: object | None) -> dict:
     if calibration is None:
         return {"sample_size": 0, "platform_profiles": {}, "notes": []}
@@ -233,6 +281,17 @@ DASHBOARD_HTML = r"""<!doctype html>
       letter-spacing: 0;
     }
     button, select, input { font: inherit; }
+    button {
+      height: 34px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      border-radius: 6px;
+      padding: 0 11px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    button.primary { background: var(--green); border-color: var(--green); color: #fff; }
     .app {
       min-height: 100vh;
       display: grid;
@@ -339,11 +398,79 @@ DASHBOARD_HTML = r"""<!doctype html>
     th, td { padding: 8px 6px; border-bottom: 1px solid var(--line); text-align: left; }
     th { color: var(--muted); font-size: 12px; }
     .status { color: var(--muted); font-size: 12px; margin-top: 8px; }
+    .control-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin: 8px 0 12px;
+    }
+    .control-row input {
+      width: 92px;
+      height: 34px;
+    }
+    .live-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(90px, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .live-stat {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 9px;
+      background: #fbfcfa;
+    }
+    .live-stat .label { color: var(--muted); font-size: 11px; font-weight: 800; }
+    .live-stat .value { font-size: 18px; font-weight: 850; margin-top: 2px; }
+    .timeline {
+      display: grid;
+      gap: 8px;
+      max-height: 360px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .tick {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fbfcfa;
+    }
+    .tick-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      font-weight: 850;
+      margin-bottom: 6px;
+    }
+    .decision-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .mini-offer {
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--line);
+      border-radius: 7px;
+      padding: 8px;
+      background: #fff;
+      min-width: 0;
+    }
+    .mini-offer.accept { border-left-color: var(--green); }
+    .mini-offer.decline { border-left-color: var(--red); }
+    .mini-offer .title {
+      font-weight: 850;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     @media (max-width: 980px) {
       .app { grid-template-columns: 1fr; }
       aside { position: static; height: auto; }
       .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .layout { grid-template-columns: 1fr; }
+      .live-grid, .decision-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
   </style>
 </head>
@@ -381,6 +508,20 @@ DASHBOARD_HTML = r"""<!doctype html>
       <section class="metric-grid" id="metrics"></section>
       <section class="layout">
         <div>
+          <div class="panel">
+            <h2>Live Random Route Lab</h2>
+            <div class="control-row">
+              <button id="liveToggle" class="primary" type="button">Start</button>
+              <button id="liveStep" type="button">Step</button>
+              <button id="liveBurst" type="button">Burst</button>
+              <button id="liveReset" type="button">Reset</button>
+              <label for="liveSeed" style="margin:0">Seed</label>
+              <input id="liveSeed" type="number" value="42">
+            </div>
+            <div class="live-grid" id="liveStats"></div>
+            <div class="sub" id="liveNow">Waiting for first generated route batch.</div>
+            <div class="timeline" id="liveTimeline"></div>
+          </div>
           <div class="panel">
             <h2>Offer Stack</h2>
             <div class="offers" id="offers"></div>
@@ -423,6 +564,7 @@ DASHBOARD_HTML = r"""<!doctype html>
   <script>
     const controls = ["profile", "demand", "traffic", "weather", "saturation", "expectedHourly"];
     const $ = (id) => document.getElementById(id);
+    let liveTimer = null;
 
     async function loadProfiles() {
       const response = await fetch("/api/profiles");
@@ -440,6 +582,56 @@ DASHBOARD_HTML = r"""<!doctype html>
       const data = await response.json();
       render(data);
       $("status").textContent = `Synced ${new Date().toLocaleTimeString()}`;
+    }
+
+    function livePayload(extra = {}) {
+      return {
+        profile: $("profile").value || "maximize_hourly",
+        demand: Number($("demand").value),
+        traffic: Number($("traffic").value),
+        weather: Number($("weather").value),
+        saturation: Number($("saturation").value),
+        expectedHourly: Number($("expectedHourly").value),
+        ...extra
+      };
+    }
+
+    async function liveState() {
+      const response = await fetch("/api/live/state");
+      const data = await response.json();
+      renderLive(data.live);
+    }
+
+    async function liveTick(count = 1) {
+      const response = await fetch("/api/live/tick", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(livePayload({ count }))
+      });
+      const data = await response.json();
+      renderLive(data.live);
+    }
+
+    async function liveReset() {
+      const response = await fetch("/api/live/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seed: $("liveSeed").value })
+      });
+      const data = await response.json();
+      renderLive(data.live);
+    }
+
+    function toggleLive() {
+      if (liveTimer) {
+        clearInterval(liveTimer);
+        liveTimer = null;
+        $("liveToggle").textContent = "Start";
+        return;
+      }
+      liveTick();
+      liveTimer = setInterval(() => liveTick(), 1400);
+      $("liveToggle").textContent = "Stop";
     }
 
     function render(data) {
@@ -510,8 +702,53 @@ DASHBOARD_HTML = r"""<!doctype html>
       `;
     }
 
+    function renderLive(live) {
+      $("liveStats").innerHTML = [
+        liveStat("Tick", live.tick),
+        liveStat("Clock", `${live.elapsed_minutes.toFixed(1)}m`),
+        liveStat("Profit", `$${live.net_profit.toFixed(2)}`),
+        liveStat("Hourly", `$${live.profit_per_hour.toFixed(2)}`),
+        liveStat("Accepted", live.accepted_count),
+        liveStat("Declined", live.declined_count)
+      ].join("");
+
+      const latest = live.events.length ? live.events[live.events.length - 1] : null;
+      $("liveNow").textContent = latest
+        ? `Tick ${latest.tick}: ${latest.status.replaceAll("_", " ")} · selected ${latest.selected_offer_id || "none"} · active until ${latest.active_until_minute.toFixed(1)}m`
+        : "Waiting for first generated route batch.";
+
+      $("liveTimeline").innerHTML = live.events.slice().reverse().map((event) => {
+        const ranked = event.recommendation.ranked_offers.slice(0, 3);
+        return `<div class="tick">
+          <div class="tick-head">
+            <span>Tick ${event.tick} · ${event.timestamp_minutes.toFixed(1)}m</span>
+            <span class="pill ${event.status === "accepted" ? "accept" : "decline"}">${event.status.replaceAll("_", " ")}</span>
+          </div>
+          <div class="sub">Selected ${event.selected_offer_id || "none"} · batch ${event.batch.length} routes · profit $${event.realized_profit.toFixed(2)}</div>
+          <div class="decision-grid">
+            ${ranked.map((scored) => {
+              const offer = scored.offer;
+              const reasons = scored.reasons.length ? scored.reasons.join(", ") : "clears policy";
+              return `<div class="mini-offer ${scored.decision}">
+                <div class="title">${offer.offer_id}</div>
+                <div class="sub">${offer.platform.replaceAll("_", " ")} · ${offer.pickup_zone} to ${offer.dropoff_zone}</div>
+                <span class="pill ${scored.decision}">${scored.decision}</span>
+                <span class="pill">$${scored.net_profit.toFixed(2)}</span>
+                <div class="sub">${scored.profit_per_hour.toFixed(2)}/hr · ${scored.total_miles.toFixed(1)} mi</div>
+                <div class="sub">${reasons}</div>
+              </div>`;
+            }).join("")}
+          </div>
+        </div>`;
+      }).join("");
+    }
+
     function metric(label, value) {
       return `<div class="metric"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+    }
+
+    function liveStat(label, value) {
+      return `<div class="live-stat"><div class="label">${label}</div><div class="value">${value}</div></div>`;
     }
 
     function table(headers, rows) {
@@ -521,7 +758,12 @@ DASHBOARD_HTML = r"""<!doctype html>
 
     loadProfiles().then(() => {
       controls.forEach((id) => $(id).addEventListener("input", refresh));
+      $("liveToggle").addEventListener("click", toggleLive);
+      $("liveStep").addEventListener("click", () => liveTick());
+      $("liveBurst").addEventListener("click", () => liveTick(8));
+      $("liveReset").addEventListener("click", liveReset);
       refresh();
+      liveState();
     });
   </script>
 </body>

@@ -13,6 +13,7 @@ from .models import (
     ScoredOffer,
     SessionState,
 )
+from .live import LiveRouteLab, RandomRouteConfig, RandomRouteGenerator
 from .optimizer import DeliverySessionOptimizer
 from .policies import ScoringPolicy, get_policy
 from .profiles import DriverProfile, get_profile
@@ -22,12 +23,15 @@ __all__ = [
     "DeliverySessionOptimizer",
     "DriverProfile",
     "DriverPreferences",
+    "LiveRouteLab",
     "Location",
     "MarketState",
     "Offer",
     "OfferSource",
     "PlatformAction",
     "PlatformProfile",
+    "RandomRouteConfig",
+    "RandomRouteGenerator",
     "Recommendation",
     "ScoringPolicy",
     "ScoredOffer",

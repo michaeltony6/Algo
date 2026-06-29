@@ -29,6 +29,7 @@ raw platform/manual payload
 - `profiles.py`: driver profile presets that tune preferences and policies.
 - `reports.py`: counterfactual shift reports and best-hindsight calculations.
 - `dashboard.py`: local browser dashboard and JSON API.
+- `live.py`: deterministic random route generation and real-time simulation state for dashboard testing.
 - `integrations/`: official API auth/signing scaffolding and payload normalizers.
 
 ## The Seven Upgrade Areas
@@ -116,6 +117,15 @@ It exposes:
 - `/api/state`: recommendation, calibration, predictions, zone ranking, and backtest report.
 - `/api/offers`: normalized offers in the store.
 - `/api/profiles`: driver profile presets.
+- `/api/live/state`: current random-route lab state and timeline.
+- `/api/live/tick`: generate one or more random route batches and score them.
+- `/api/live/reset`: reset the route lab, optionally with a deterministic seed.
 - `/api/health`: database and schema summary.
 
 The first launch seeds a blank database from the sample files so the app has useful data immediately.
+
+## Live Random Route Lab
+
+The live lab is built for watching the algorithm work in real time. Every tick generates a random batch of platform offers with pickup/dropoff zones, route burden, payout, confidence, deadlines, and complexity. The optimizer receives the current driver profile and market slider values, then the dashboard appends the ranked decision to a timeline.
+
+Use this when tuning strategy behavior because it makes threshold effects visible: hot markets increase waiting value, strict profiles decline long-deadhead routes, and active deliveries cause later batches to be observed without accepting conflicting work.

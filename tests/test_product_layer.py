@@ -5,6 +5,7 @@ from pathlib import Path
 from delivery_optimizer import DeliverySessionOptimizer, DriverPreferences, MarketState, Offer
 from delivery_optimizer.calibration import DeliveryRecord
 from delivery_optimizer.dashboard import DashboardApp, seed_demo_data
+from delivery_optimizer.live import LiveRouteLab, RandomRouteConfig, live_state_to_dict
 from delivery_optimizer.prediction import SimpleStatsPredictor
 from delivery_optimizer.profiles import get_profile
 from delivery_optimizer.reports import build_shift_report, events_from_offers
@@ -64,6 +65,9 @@ class StoreAndProductLayerTest(unittest.TestCase):
             self.assertIn("recommendation", state)
             self.assertIn("strategy_runs", state["report"])
             self.assertIn("platform_profiles", state["calibration"])
+            live_event = store_app_live_tick(store)
+            self.assertGreaterEqual(live_event["live"]["tick"], 1)
+            self.assertIn("events", live_event["live"])
             store.close()
 
     def test_predictor_and_shift_report_surface_counterfactuals(self) -> None:
@@ -108,6 +112,25 @@ class StoreAndProductLayerTest(unittest.TestCase):
 
         self.assertEqual(optimizer.policy.name, "conservative")
         self.assertLess(profile.preferences.max_total_miles, 20)
+
+    def test_live_route_lab_generates_deterministic_real_time_events(self) -> None:
+        lab_a = LiveRouteLab(RandomRouteConfig(seed=7, tick_minutes=3))
+        lab_b = LiveRouteLab(RandomRouteConfig(seed=7, tick_minutes=3))
+
+        event_a = lab_a.step(profile_name="maximize_hourly")
+        event_b = lab_b.step(profile_name="maximize_hourly")
+        state = live_state_to_dict(lab_a.state())
+
+        self.assertEqual(event_a.batch[0].offer_id, event_b.batch[0].offer_id)
+        self.assertEqual(state["tick"], 1)
+        self.assertEqual(len(state["events"]), 1)
+        self.assertIn(event_a.status, {"accepted", "declined_batch", "busy_observed"})
+
+
+def store_app_live_tick(store: OptimizerStore) -> dict:
+    app = DashboardApp(store)
+    app.live_lab.step(profile_name="maximize_hourly")
+    return {"live": live_state_to_dict(app.live_lab.state())}
 
 
 if __name__ == "__main__":
