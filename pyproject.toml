@@ -13,6 +13,7 @@ license = { text = "MIT" }
 
 [project.scripts]
 delivery-optimizer = "delivery_optimizer.cli:main"
+delivery-dashboard = "delivery_optimizer.dashboard:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

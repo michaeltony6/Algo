@@ -24,6 +24,11 @@ raw platform/manual payload
 - `routing.py`: route providers and offer enrichment.
 - `calibration.py`: learns platform and market parameters from historical delivery records.
 - `simulation.py`: replays offer events against optimizer and baseline strategies.
+- `store.py`: SQLite persistence for offers, decisions, completed deliveries, market snapshots, and strategy runs.
+- `prediction.py`: lightweight statistical predictions for payout, duration, miles, cancellation risk, and better-offer probability.
+- `profiles.py`: driver profile presets that tune preferences and policies.
+- `reports.py`: counterfactual shift reports and best-hindsight calculations.
+- `dashboard.py`: local browser dashboard and JSON API.
 - `integrations/`: official API auth/signing scaffolding and payload normalizers.
 
 ## The Seven Upgrade Areas
@@ -97,3 +102,20 @@ runs = BacktestSimulator(optimizer).compare(
 ```
 
 Use this to tune policies against actual shifts rather than guessing.
+
+## Product Layer
+
+The dashboard runs with only the Python standard library:
+
+```bash
+PYTHONPATH=src python3 -m delivery_optimizer.dashboard --db data/demo.sqlite3
+```
+
+It exposes:
+
+- `/api/state`: recommendation, calibration, predictions, zone ranking, and backtest report.
+- `/api/offers`: normalized offers in the store.
+- `/api/profiles`: driver profile presets.
+- `/api/health`: database and schema summary.
+
+The first launch seeds a blank database from the sample files so the app has useful data immediately.

@@ -15,10 +15,12 @@ from .models import (
 )
 from .optimizer import DeliverySessionOptimizer
 from .policies import ScoringPolicy, get_policy
+from .profiles import DriverProfile, get_profile
 
 __all__ = [
     "Decision",
     "DeliverySessionOptimizer",
+    "DriverProfile",
     "DriverPreferences",
     "Location",
     "MarketState",
@@ -30,5 +32,6 @@ __all__ = [
     "ScoringPolicy",
     "ScoredOffer",
     "SessionState",
+    "get_profile",
     "get_policy",
 ]

@@ -155,6 +155,22 @@ Or from source:
 PYTHONPATH=src python3 -m delivery_optimizer --offers examples/offers.sample.json --target-hourly 25 --vehicle-cost 0.45
 ```
 
+## Dashboard
+
+Run the local operations console:
+
+```bash
+PYTHONPATH=src python3 -m delivery_optimizer.dashboard --db data/demo.sqlite3
+```
+
+After package installation, the same app is available as:
+
+```bash
+delivery-dashboard --db data/demo.sqlite3
+```
+
+The dashboard seeds itself from `examples/offers.sample.json` and `examples/history.sample.json` when the database is empty. It shows live recommendations, driver profile controls, market sliders, prediction confidence, calibration, zone ranking, and strategy backtests.
+
 Available policies:
 
 - `balanced`
